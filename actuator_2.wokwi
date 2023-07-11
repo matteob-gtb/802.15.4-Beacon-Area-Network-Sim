@@ -1,0 +1,380 @@
+//https://wokwi.com/projects/369254707654199297
+
+
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include <ArduinoJson.h> 
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/semphr.h>
+#include <ESP32Time.h>
+#include <LiquidCrystal_I2C.h>
+
+
+#define INCLUDE_vTaskSuspend 1
+
+#define JSON_MSG_BUFFER_SIZE 1500
+
+#define ASSOCIATION_MESSAGE_TYPE 0
+#define RTT_ESTIMATION_REQUEST_TYPE 1
+#define RTT_ESTIMATION_RESPONSE_TYPE 2
+#define BEACON_MESSAGE_TYPE 0x1e
+#define DATA_UPLINK_MSG_TYPE 0x100
+#define DATA_DOWNLINK_MSG_TYPE 0x101
+#define DATA_ACK_MESSAGE 0x200
+
+#define MQTT_TOPIC "/iot/polimi/c22b520197ff50c6ae38d0536a41a53d17e7e7ed9ece4ed815b74b9459c20238"
+#define MQTT_BROKER "broker.hivemq.com"
+#define MOTE_ID "10656748-ACT2"
+#define MQTT_PORT 1883
+
+#define PWM_LED_PIN 14
+#define PWM_PERIOD_TIME 100 //ms -> no need to use map() since the correspondence is already [0-100] -> [0-100]
+volatile short pwm_value = 0;
+SemaphoreHandle_t semaphore;
+bool data_received = false;
+volatile bool new_value_inbound = false;
+
+#define CONNECTED_LED 2 //onboard led + D2, it will be powered on once the mote is associated to the PAN
+
+bool associated_to_PAN = false;
+
+/*"hack" to account for the remote broker's delay*/
+bool expecting_beacon = true,expecting_message;
+  
+WiFiClient wifiClient;
+PubSubClient mqttClient(wifiClient);
+
+unsigned long long next_beacon_time_milli = -1;
+unsigned int pan_id = 0;
+
+LiquidCrystal_I2C LCD = LiquidCrystal_I2C(0x27, 20, 4);
+
+ 
+bool association_req_sent = false; 
+/* the coordinator will assign a unique numeric ID
+to identify the mote in the network, to keep string manipulation 
+to a minimum for each beacon message */
+/* four motes -> at most AID will be ( 1 << 4),16 which still fits into 2 bytes*/
+unsigned short AID = -1;
+unsigned int last_sequence_number = 0;  
+
+
+unsigned long long time_until_next_beacon = 100;
+unsigned long long time_slept_current_beacon = 0;
+
+
+unsigned long long last_beac_at_milli = 0;
+unsigned long long active_part_end = 0;
+
+
+void associate_to_PAN(){
+  StaticJsonDocument<JSON_MSG_BUFFER_SIZE> doc;
+  char msg[JSON_MSG_BUFFER_SIZE];
+
+  doc["msg_type"] = 0;
+  doc["mote_id"] = MOTE_ID;
+  
+  if(serializeJson(doc, msg,200)> sizeof(msg)){
+    Serial.print("FATAL : msg size mismatch");
+    return;
+  }
+  Serial.println("Sending ASSOCIATION MESSAGE to the PAN coordinator");
+  mqttClient.publish(MQTT_TOPIC,msg);
+  association_req_sent = true;
+}
+
+#define FLASH_PERIOD_MS 200
+
+/* the led will flash before changing pwm value*/
+void flash_led(int how_many_times){
+    for(short i = 0;i<how_many_times;i++){
+      digitalWrite(PWM_LED_PIN, HIGH);
+      delay(FLASH_PERIOD_MS);
+      digitalWrite(PWM_LED_PIN, LOW);
+      delay(FLASH_PERIOD_MS);
+    }
+}
+
+void check_connection_send_ack(char* message){
+    if(!mqttClient.connected()) //random disconnections are possible
+      connectToMqttBroker();
+    mqttClient.publish(MQTT_TOPIC,message);
+    Serial.println("Sent an ACK to the broker");
+}
+
+
+void do_pwm_stuff(void * parameter) {
+  Serial.println("PWM task running on Core 0,waiting for data");
+
+  if (xSemaphoreTake(semaphore, (TickType_t)portMAX_DELAY) == pdTRUE) {
+    Serial.println("Semaphore obtained, starting PWM of the LED");
+  }
+  while (true) {
+    if(new_value_inbound){
+      flash_led(4);
+      new_value_inbound = false;
+      LCD.clear();
+      LCD.print(String(MOTE_ID).substring(9));
+      LCD.print(": ");
+      LCD.print(AID);
+      LCD.setCursor(0, 1);
+      LCD.print("Current PWM: ");
+      LCD.print(pwm_value);
+    }
+    if(pwm_value == 0) {
+      /*it wouldn't look as off, wokwi doesn't simulate fast enough so this "trick" is needed when it's 0*/
+      digitalWrite(PWM_LED_PIN, LOW);
+      delay(PWM_PERIOD_TIME);
+    } else {
+      digitalWrite(PWM_LED_PIN, HIGH);
+      delay(pwm_value);
+      digitalWrite(PWM_LED_PIN, LOW);
+      delay(PWM_PERIOD_TIME-pwm_value);
+    }
+  }
+}
+
+
+
+void setup() {
+  
+
+  LCD.init();
+  LCD.backlight();
+  LCD.setCursor(0, 0);
+  LCD.print("Booting up...");
+
+  pinMode(CONNECTED_LED, OUTPUT);
+  pinMode(PWM_LED_PIN, OUTPUT);
+  flash_led(2);
+  digitalWrite(PWM_LED_PIN,0);
+
+  Serial.begin(115200);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin("Wokwi-GUEST","");
+  Serial.println("Wifi ON");
+  short attempts = 0;
+  while (WiFi.status() != WL_CONNECTED) {
+    Serial.println("Attempting to connect to the wifi...");
+    delay(1000);
+    attempts++;
+    if(attempts == 10) ESP.restart(); //wokwi please...
+  } 
+  LCD.clear();
+  LCD.print("WiFi ON...");
+
+
+
+  mqttClient.setBufferSize(2048);
+  mqttClient.setServer(MQTT_BROKER, MQTT_PORT);
+  mqttClient.connect(MOTE_ID);
+  while(!mqttClient.connected()){
+    Serial.println("Attempting MQTT connection");
+    delay(100);
+    mqttClient.connect(MOTE_ID);
+  }
+  Serial.println("Connected to MQTT broker");
+  mqttClient.subscribe(MQTT_TOPIC);
+  mqttClient.setCallback(message_received);
+
+  semaphore = xSemaphoreCreateBinary();
+  xTaskCreatePinnedToCore(
+    do_pwm_stuff,          // Task function
+    "pwm_handler",                // Task name
+    10000,                 // Stack size (bytes)
+    NULL,                  // Task parameter
+    1,                     // Task priority
+    NULL,                  // Task handle
+    0                      // Core number (0 or 1)
+  );
+  Serial.print(MOTE_ID);
+  Serial.println(" online, waiting for a beacon to connect ");
+  LCD.clear();
+  LCD.print("Boot completed");
+}
+ 
+void message_received(char* topic, byte * message, unsigned int length) {
+  StaticJsonDocument<JSON_MSG_BUFFER_SIZE> doc;
+  DeserializationError error = deserializeJson(doc, message);
+  // Test if parsing succeeds.
+  if (error) {
+    Serial.print(F("deserializeJson() failed: "));
+    Serial.println((char*)message);
+    Serial.println(error.f_str());
+    return;
+  }
+  if(doc["msg_type"] == DATA_DOWNLINK_MSG_TYPE && doc["to"] == AID){ //the callback has been called during CFP downlink of this mote
+      unsigned long long start = millis(); 
+      Serial.println("Received downlink DATA message");
+      expecting_message = false;
+      if(!data_received) {
+        data_received = true; //enable the timer after the first message has been received
+        xSemaphoreGive(semaphore); //enable task 0 to run
+      }
+      StaticJsonDocument<500> ACK_MESSAGE;
+      char raw_msg[200];
+      ACK_MESSAGE["from"] = AID;
+      ACK_MESSAGE["to"] = 0; //coordinator
+      ACK_MESSAGE["sequence_number"] = doc["sequence_number"];
+      ACK_MESSAGE["msg_type"] = DATA_ACK_MESSAGE;
+      pwm_value = (short) doc["value"];
+      Serial.print("Received humidity value from mote ");
+      Serial.print((short)doc["from"]);
+      Serial.print(", value : ");
+      Serial.println(pwm_value);
+      new_value_inbound = true;
+      serializeJson(ACK_MESSAGE,raw_msg);
+      check_connection_send_ack(raw_msg);
+      return;
+   }
+
+  if(doc["msg_type"] == BEACON_MESSAGE_TYPE)
+  { 
+    /*should never happen, added to the actuators just in case*/
+     if(!last_sequence_number) last_sequence_number = doc["beacon_seq_number"];
+     else if((int) doc["beacon_seq_number"]  != last_sequence_number+ 1){
+      /*we are out-of-sync, stay idle and re-sync with the network*/
+      Serial.println("Detected pause in the simulation, re-syncing with the network..");
+      mqttClient.disconnect();
+      connectToMqttBroker();
+      last_sequence_number = 0;
+      expecting_beacon = true;
+      return;
+     }
+     last_sequence_number = doc["beacon_seq_number"];
+     if(associated_to_PAN && doc["pan_id"] != pan_id){
+        Serial.println("Hard disconnect detected, rebooting and reassociating");
+        delay(1000);
+        mqttClient.disconnect();
+        ESP.restart();
+      }
+      last_beac_at_milli = millis();
+
+      expecting_beacon = false;
+      unsigned int slot_duration = doc["slot_duration"];
+      unsigned int time_until_cap = ((short)doc["cap_start"])*slot_duration;
+      unsigned int beacon_interval =  doc["beacon_interval"];
+      next_beacon_time_milli = last_beac_at_milli + beacon_interval * slot_duration;
+
+      if(!associated_to_PAN){
+            if(association_req_sent){ //if already sent,check if it went ok, otherwise retry
+                if(doc["AIDs"].containsKey(MOTE_ID))
+                {
+                  pan_id = doc["pan_id"];
+                  Serial.print("Mote has AID : ");
+                  AID = doc["AIDs"][MOTE_ID];
+                  Serial.println(AID);
+                  LCD.clear();
+                  LCD.print(String(MOTE_ID).substring(9));
+                  LCD.print(": ");
+                  LCD.print(AID);
+                  digitalWrite(CONNECTED_LED, 1); 
+                  associated_to_PAN = true;
+                } else {
+                  Serial.println("No AID found, sending association request again");
+                  time_until_next_beacon -= time_until_cap; 
+                  delay(time_until_cap);
+                  associate_to_PAN(); 
+                }
+          } else {
+            Serial.println("First beacon received, associating...");
+            delay(time_until_cap);
+            associate_to_PAN(); 
+          }
+         if(!associated_to_PAN)
+            return; //no further actions when associating to the pan can be executed
+      }
+
+      Serial.print("Received beacon with sequence number : ");
+      Serial.println((unsigned int) doc["beacon_seq_number"]); 
+      unsigned short cap_start = doc["cap_start"],
+      cap_duration = doc["cap_duration"];
+      /*calculate how much time i need to wait until it is my turn in the CFP*/
+      unsigned int time_until_CFP_up = 0,time_until_CFP_down = 0;
+      JsonArray GTS_downlink = doc["GTS_downlink"];
+      /*uplink and downlink are symmetrical*/
+      unsigned int downlink_length = GTS_downlink.size();
+      unsigned short my_turn_index = -1,ctr = 0;
+      /*iterate the array to find out the order of my dedicated slot*/
+      for(JsonVariant v : GTS_downlink) {
+        if(v.as<short>() == AID) { 
+          my_turn_index = ctr;
+        }
+        ctr++;
+      }
+      /*cfp_up not used by the actuators, they will just wait until their cfp down*/
+      time_until_CFP_up = (cap_start + cap_duration + my_turn_index) * slot_duration;
+      time_until_CFP_down = time_until_CFP_up + downlink_length*slot_duration;
+      /*my active part ends after the downlink period + my slot*/
+      active_part_end = last_beac_at_milli + time_until_CFP_down + slot_duration;
+
+      Serial.print("Time until CFP up and down : [");
+      Serial.print(time_until_CFP_up);
+      Serial.print(",");
+      Serial.print(time_until_CFP_down);
+      Serial.println("]");
+      /* return and stay idle cycling in loop() checking if there are inbound messages
+      during the active part, then sleep for the inactive one*/
+  }
+ 
+}
+
+
+
+
+#define MQTT_QOS 0
+
+void connectToMqttBroker()
+{
+  Serial.println("Reconnecting to MQTT Broker...");
+  while (!mqttClient.connected())
+  {
+    if (mqttClient.connect(MOTE_ID))
+    {
+      Serial.println("Connected to MQTT broker.");
+      // subscribe to topic
+      mqttClient.subscribe(MQTT_TOPIC,MQTT_QOS);
+    }
+    delay(10);
+  }
+}
+
+#define BEACON_BUSY_WAIT_TOLERANCE 100
+/* "simulate" real duty cycling from the motes, as explained in the report
+the commented out fuctions cannot be used*/
+void sleep(){ 
+  // WiFi.disconnect();
+  // WiFi.mode(WIFI_OFF);
+  long long wait_until = next_beacon_time_milli - millis() - BEACON_BUSY_WAIT_TOLERANCE ;
+  if(wait_until < 0){ //beacon incoming
+    return;
+  }
+  Serial.println("Going to sleep for the inactive part");
+  //Serial.println(wait_until); 
+  //esp_sleep_enable_timer_wakeup(next_beacon_time_milli* 1000);
+  //esp_light_sleep_start();
+  delay(wait_until);
+}
+
+unsigned long ctr = 0;
+void loop() {
+  if(!associated_to_PAN){ //stay idle until the first beacon is received
+    if(!mqttClient.connected())
+      connectToMqttBroker();
+    mqttClient.loop();
+    delay(100);
+  } else { 
+    /*go into the "real" working cycle*/
+    if(!mqttClient.connected())
+      connectToMqttBroker();
+    mqttClient.loop();
+    /*stay idle and run mqttClient.loop until your active part ends
+    cast to a signed value is necessary*/
+    if((long long) active_part_end - millis() > 0 || expecting_beacon)
+    {      
+      delay(50);
+    } else sleep();
+  }
+}

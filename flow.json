@@ -1,0 +1,558 @@
+[
+    {
+        "id": "cb38a8b98543bce3",
+        "type": "tab",
+        "label": "Flow 1",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "8c76f43a7ab5cdf0",
+        "type": "mqtt in",
+        "z": "cb38a8b98543bce3",
+        "name": "",
+        "topic": "/iot/polimi/c22b520197ff50c6ae38d0536a41a53d17e7e7ed9ece4ed815b74b9459c20238",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "2af42c3059bfd9fe",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 440,
+        "y": 580,
+        "wires": [
+            [
+                "5878397189cf165b",
+                "ee7c20c6c4eb860c",
+                "fa36beb6884b06ed",
+                "a257bad8f14c8311",
+                "2ce66e1387af5255",
+                "bad3d2384fa40aa4"
+            ]
+        ]
+    },
+    {
+        "id": "885e55b4ade79dcb",
+        "type": "inject",
+        "z": "cb38a8b98543bce3",
+        "name": "periodic_timer",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "0.001",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "1",
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 280,
+        "y": 200,
+        "wires": [
+            [
+                "ddea800776e657db"
+            ]
+        ]
+    },
+    {
+        "id": "de381f18d2fa708b",
+        "type": "function",
+        "z": "cb38a8b98543bce3",
+        "name": "SEND_BEACON_MSG",
+        "func": "function getFormattedDate() {\n    var currentDate = new Date();\n    var milliseconds = currentDate.getMilliseconds();\n    var day = currentDate.getDate().toString().padStart(2, '0');\n    var month = (currentDate.getMonth() + 1).toString().padStart(2, '0');\n    var year = currentDate.getFullYear().toString();\n    var time = currentDate.toLocaleTimeString().slice(0, -3);\n    var seconds = time.slice(-2);\n    var formattedDate = day + '-' + month + '-' + year + ' ' + time.slice(0, -3) + ':' + seconds + '.' + milliseconds.toString().padStart(3, '0');\n    return formattedDate;\n}\n\n\n\nvar tol = 500;// tolerance is half a second\n\nvar cur_beacon_status = global.get(\"beacon_message\");\nvar associated_nodes = global.get(\"associated_nodes\");\n\nconst gts_size = cur_beacon_status[\"GTS_uplink\"].length * 2;\n\nvar beacon_msg = global.get(\"beacon_message\");\n\n// beacon_msg[\"cap_start\"] = 1;\n\n// beacon_msg[\"AIDs\"] = {};\n\n// for (var mote in global.get(\"associated_nodes\")){\n//     if(mote.includes(\"nodes\")) continue;\n//     beacon_msg[\"AIDs\"][mote] = associated_nodes[mote][\"association_id\"];\n// }\n\nvar n_active = 1 + gts_size+ beacon_msg[\"cap_duration\"];\n\nvar preset_duty_cycle = 0.5; //50% is pretty high but it's chosen this \nvar beacon_interval = Math.ceil(n_active/preset_duty_cycle);\nvar n_inactive = beacon_interval - n_active;\n\n\n\nbeacon_msg[\"beacon_interval\"] = beacon_interval;\nbeacon_msg[\"sleep_duration\"] = n_inactive;\nvar slot_duration = beacon_msg[\"slot_duration\"]; \n\n/* calculate the traffic indication map starting from the status of the message buffer */\n\nvar msg_buffer = global.get(\"message_buffer\");\n\nbeacon_msg[\"pan_id\"] = global.get(\"pan_id\");\n\n/* just for debug purposes */\nvar cap_ms = slot_duration;\nvar uplink_start = cap_ms + (cur_beacon_status[\"cap_duration\"])*slot_duration;\nvar downlink_start = uplink_start + (cur_beacon_status[\"GTS_uplink\"].length) * slot_duration;\nvar cfp_end =  downlink_start + cur_beacon_status[\"GTS_uplink\"].length*slot_duration;\nvar beacon_end = cfp_end + n_inactive*slot_duration;\n\nif(false)\nconsole.log({\n    \"cap_ms\": cap_ms ,\n    \"uplink_start\": uplink_start,\n    \"downlink_start\": downlink_start,\n    \"cfp_end\": cfp_end,\n    \"beacon_end\": beacon_end\n})\n \n\n/* just for debug purposes */\n\n\nif(false) //disable\nconsole.log({\n    \"n_active\" : n_active,\n    \"n_inactive\" : n_inactive,\n    \"preset_duty_cycle\" : preset_duty_cycle,\n    \"beacon_interval\" : beacon_msg[\"beacon_interval\"],\n    \"n_active_ms\" : n_active*slot_duration,\n    \"n_inactive_ms\" : n_inactive*slot_duration, \n    \"beacon_interval_ms\" : beacon_msg[\"beacon_interval\"]*slot_duration,\n    \"slot_duration\": slot_duration\n})\n\n\nglobal.set(\"beacon_interval_ms\", beacon_msg[\"beacon_interval\"] * slot_duration);\n\nmsg.payload = beacon_msg; \n\nglobal.set(\"last_beacon_timestamp\", Date.now());\nvar beacon_seq_number = global.get(\"beacon_seq_number\");\nmsg.payload[\"beacon_seq_number\"] = beacon_seq_number;\nglobal.set(\"beacon_seq_number\", beacon_seq_number+1);\nconsole.log(\"Sending beacon message - [\" + getFormattedDate() + \"] - \" + \" seq : [\" +beacon_seq_number+\"]\" );\n\n \n\n\nmsg.payload[\"timestamp\"] = Date.now();\nreturn msg;\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 870,
+        "y": 220,
+        "wires": [
+            [
+                "fa7ce33557c42960"
+            ]
+        ]
+    },
+    {
+        "id": "5ad27d583b8a1e6a",
+        "type": "inject",
+        "z": "cb38a8b98543bce3",
+        "name": "init",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": true,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 870,
+        "y": 420,
+        "wires": [
+            [
+                "47452b54199d37a6"
+            ]
+        ]
+    },
+    {
+        "id": "47452b54199d37a6",
+        "type": "function",
+        "z": "cb38a8b98543bce3",
+        "name": "SETUP",
+        "func": "/*\nprepare the skeletons for each type of message to send\nso that i only have to update the fields that vary\nstores all the message that need to be delayed during the \ndownlink slots to the motes\n*/\nglobal.set(\"message_buffer\", {})\nglobal.set(\"last_beacon_timestamp\",-1);\nglobal.set(\"beacon_interval_ms\",-1);\nglobal.set(\"beacon_seq_number\", 0);\n\n/*statistics*/\n\nglobal.set(\"messages_exchanged\",{});\n\n\n\nglobal.set(\"pan_id\",Math.ceil(Math.random()*Math.pow(2,31)) ^ (Date.now() & 0x0FFFFFFF));\n\n\n\nvar beacon_prototype = {\n    \"msg_type\":0x1e,\n    \"slot_duration\": 500, \n    \"cap_start\": 1,\n    \"GTS_uplink\" : [], /* array of AIDs, the order in which they appear will determine the order in which the motes will be able to send/receive msgs*/\n    \"GTS_downlink\" : [],\n    \"cap_duration\": 4, //in number of slots\n    \"sleep_duration\": -1,\n    \"TIM\": 0,\n    \"AIDs\": {},\n    \"beacon_interval\": Math.ceil((10*1000) / 1500), //in number of slots\n }\nglobal.set(\"beacon_message\", beacon_prototype);\n\n \n\nglobal.set(\"associated_nodes\", {\"number_of_nodes\" : 0});\n\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1040,
+        "y": 420,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "ee7c20c6c4eb860c",
+        "type": "function",
+        "z": "cb38a8b98543bce3",
+        "name": "PROCESS_ASSOCIATION_MSG",
+        "func": "var string_payload = msg.payload;\nif(string_payload[\"msg_type\"] == undefined || string_payload[\"msg_type\"] != 0) return;\n\nvar beacon_msg = global.get(\"beacon_message\");\nvar curr_nodes = global.get(\"associated_nodes\");\nvar mote_id = string_payload[\"mote_id\"];\n\n\n \n\nif (curr_nodes[mote_id] == undefined){\n  var number_of_nodes = curr_nodes[\"number_of_nodes\"];\n  curr_nodes[\"number_of_nodes\"] = number_of_nodes + 1;\n  var curr_mote_AID = (1 << number_of_nodes);\n\n  var mote_data_structure_prototype = {\n    \"association_timestamp\": Date.now(),\n    \"association_id\": curr_mote_AID,\n    \"mote_type\": mote_id.includes(\"ACT\") ? \"actuator\" : \"sensor\"\n  }\n\n\n\n  curr_nodes[mote_id] = mote_data_structure_prototype;\n  beacon_msg[\"AIDs\"][mote_id] = curr_mote_AID;\n\n  \n\n  if(mote_data_structure_prototype[\"mote_type\"] == \"sensor\"){\n    beacon_msg[\"GTS_uplink\"].unshift(curr_mote_AID);\n    beacon_msg[\"GTS_downlink\"].unshift(curr_mote_AID);\n    \n    /* add sensors first in the uplink so the impact of eventual additional delays are minimized */\n  } else {\n    beacon_msg[\"GTS_uplink\"].push(curr_mote_AID);\n    beacon_msg[\"GTS_downlink\"].push(curr_mote_AID);\n  }\n  console.log(\"Processing association message for mote : \" + mote_id)\n} else {\n  console.log(\"Detected duplicate mote_id attempting to connect, ignoring request\");  \n  return null;\n}\n//global.set(\"associated_nodes\", curr_nodes);\n\nbeacon_msg[\"beacon_interval\"] = 1 + 1 + beacon_msg[\"cap_duration\"] + 2 * beacon_msg[\"GTS_uplink\"];\nbeacon_msg[\"beacon_interval\"] *= beacon_msg[\"slot_duration\"];\n\n//global.set(\"beacon_message\", beacon_msg);\n\nvar message_buffer = global.get(\"message_buffer\"); \nif (message_buffer[curr_mote_AID]==undefined) //might have been created already using the form\n  message_buffer[curr_mote_AID] = []; //add an entry in the buffer for this node\n//global.set(\"message_buffer\", message_buffer);\nglobal.set(\"CTS\", true);\n\n\nconsole.log(curr_nodes);\nreturn [\n  {\"payload\" : curr_nodes},\n  {\"payload\": curr_nodes[\"number_of_nodes\"]}\n  ];",
+        "outputs": 2,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 980,
+        "y": 660,
+        "wires": [
+            [
+                "c77f44f94f19fb09"
+            ],
+            [
+                "a05ed9bdc7306f9a"
+            ]
+        ]
+    },
+    {
+        "id": "fa7ce33557c42960",
+        "type": "mqtt out",
+        "z": "cb38a8b98543bce3",
+        "name": "",
+        "topic": "/iot/polimi/c22b520197ff50c6ae38d0536a41a53d17e7e7ed9ece4ed815b74b9459c20238",
+        "qos": "0",
+        "retain": "false",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "2af42c3059bfd9fe",
+        "x": 1110,
+        "y": 320,
+        "wires": []
+    },
+    {
+        "id": "5878397189cf165b",
+        "type": "function",
+        "z": "cb38a8b98543bce3",
+        "name": "PROCESS_UPLINK_MESSAGES",
+        "func": "if(msg.payload[\"msg_type\"] != 0x100) return null;\n\nconsole.log(\"PAN coord. received an uplink data message from mote \" + msg.payload[\"from\"] + \" - seq : [\" + msg.payload[\"sequence_number\"] + \"] - dest [\" + msg.payload[\"to\"] + \"]\");\nvar msg_buffer = global.get(\"message_buffer\");\n\nmsg.payload[\"acked\"] = false;\n\n\nmsg_buffer[msg.payload[\"to\"]].push(msg.payload); //add the packet to the buffer for the destination mote\n\n/* prepare and send the ack*/ \nmsg.payload = {\n    \"msg_type\":0x200, //ack\n    \"to\": msg.payload[\"from\"],\n    \"seq_number\": msg.payload[\"sequence_number\"]\n\n}\n\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 600,
+        "y": 440,
+        "wires": [
+            [
+                "fa7ce33557c42960"
+            ]
+        ]
+    },
+    {
+        "id": "cf1c28f6d66e6995",
+        "type": "delay",
+        "z": "cb38a8b98543bce3",
+        "name": "",
+        "pauseType": "delayv",
+        "timeout": "5",
+        "timeoutUnits": "seconds",
+        "rate": "1",
+        "nbRateUnits": "1",
+        "rateUnits": "second",
+        "randomFirst": "1",
+        "randomLast": "5",
+        "randomUnits": "seconds",
+        "drop": false,
+        "allowrate": false,
+        "outputs": 1,
+        "x": 640,
+        "y": 280,
+        "wires": [
+            [
+                "fa7ce33557c42960"
+            ]
+        ]
+    },
+    {
+        "id": "66a37fd56cbf5ebd",
+        "type": "function",
+        "z": "cb38a8b98543bce3",
+        "name": "SEND_DOWNLINK_MESSAGES",
+        "func": "if(msg.payload[\"msg_type\"] != 0x1e) return null;\n/* wait until the CFP downlink starts to send messages back to the nodes,\nthe check isn't really needed*/\nfunction getFormattedDate() {\n  var currentDate = new Date();\n  var milliseconds = currentDate.getMilliseconds();\n  var day = currentDate.getDate().toString().padStart(2, '0');\n  var month = (currentDate.getMonth() + 1).toString().padStart(2, '0');\n  var year = currentDate.getFullYear().toString();\n  var time = currentDate.toLocaleTimeString().slice(0, -3);\n  var seconds = time.slice(-2);\n  var formattedDate = day + '-' + month + '-' + year + ' ' + time.slice(0, -3) + ':' + seconds + '.' + milliseconds.toString().padStart(3, '0');\n  return \"[\" + formattedDate + \"]\";\n}\n\n//send the order of the slots (it's the same both in uplink and downlink) \nconsole.log(\"Downlink handler triggered - \" + getFormattedDate() );\nvar beacon = global.get(\"beacon_message\");\nvar slot_duration = beacon[\"slot_duration\"];\n\n \nvar downlink_order = beacon[\"GTS_uplink\"]; \n\nvar message_buffer = global.get(\"message_buffer\");\n\n//msg.payload is the beacon message\n\nvar msg_array = [];\nvar cur_msg;\nvar index = 0;\n \n/*\ncheck the destination in the same order as specified in the uplink schedule\ndestination is the AID of the current destination mote\n\n */\n\nfor (let index = 0; index < downlink_order.length; index++) {\n    const destination = downlink_order[index];\n\n    if (message_buffer[destination] == undefined || message_buffer[destination].length == 0) continue; //no message to send\n\n\n    console.log(\"Relaying downlink message [\" + message_buffer[destination][0].sequence_number  + \"] to mote #\" + destination);\n\n    cur_msg = new Object();\n    //message_buffer[destination][0] is the message as it's been sent by the mote\n\n    cur_msg.payload = message_buffer[destination][0];\n    cur_msg.payload[\"msg_type\"] = 0x101; //data downlink\n    \n    //set the delay so it will be sent at the right time\n\n    cur_msg.delay = index*slot_duration;\n\n    msg_array.push(cur_msg);\n\n    //only remove from the queue when it's been acked, done in the ack module\n\n    message_buffer[destination][0][\"acked\"] = false;\n }\n\n//return multiple messages\nreturn [msg_array];",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 380,
+        "y": 280,
+        "wires": [
+            [
+                "cf1c28f6d66e6995"
+            ]
+        ]
+    },
+    {
+        "id": "ddea800776e657db",
+        "type": "function",
+        "z": "cb38a8b98543bce3",
+        "name": "DYN_BEACON_PERIOD",
+        "func": "if (global.get(\"beacon_interval_ms\") == -1) return msg;\nvar last_beacon_timestamp = global.get(\"last_beacon_timestamp\");\n\n/* periodic check after the first time*/\nif (Date.now() - last_beacon_timestamp >= global.get(\"beacon_interval_ms\") )\n    {\n        msg.payload = {\n            \"msg_type\" : 0x200,\n            \"source\"  : \"beacon\"\n        }  \n        return msg;\n\n    }\nreturn null;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 550,
+        "y": 200,
+        "wires": [
+            [
+                "de381f18d2fa708b"
+            ]
+        ]
+    },
+    {
+        "id": "a05ed9bdc7306f9a",
+        "type": "ui_gauge",
+        "z": "cb38a8b98543bce3",
+        "name": "",
+        "group": "87b73a2c33823ae1",
+        "order": 2,
+        "width": "7",
+        "height": "4",
+        "gtype": "gage",
+        "title": "Connected motes",
+        "label": "#motes",
+        "format": "{{value}}",
+        "min": 0,
+        "max": "4",
+        "colors": [
+            "#00b500",
+            "#e6e600",
+            "#ca3838"
+        ],
+        "seg1": " ",
+        "seg2": " ",
+        "diff": false,
+        "className": "",
+        "x": 1310,
+        "y": 700,
+        "wires": []
+    },
+    {
+        "id": "c77f44f94f19fb09",
+        "type": "ui_template",
+        "z": "cb38a8b98543bce3",
+        "group": "87b73a2c33823ae1",
+        "name": "Interactive JSON UI",
+        "order": 3,
+        "width": "7",
+        "height": "13",
+        "format": "<!DOCTYPE html>\n<html>\n<head>\n  <meta charset=\"utf-8\">\n  <link rel=\"stylesheet\" href=\"https://cdnjs.cloudflare.com/ajax/libs/jstree/3.2.1/themes/default/style.min.css\" />\n</head>\n<body>\n    <script src=\"https://cdnjs.cloudflare.com/ajax/libs/jquery/1.12.1/jquery.min.js\"></script>\n  <script src=\"https://cdnjs.cloudflare.com/ajax/libs/jstree/3.2.1/jstree.min.js\"></script>\n  <div id=\"tree\"><div id=\"jstree\"></div></div>\n  <script>\n  \n  function jsonToJsTreeObject( json_data_object, final_array = new Array() )\n    {\n        Object.keys(json_data_object).forEach( function( data ) {\n            // console.log(\"Key:\" + data);\n            if( Array.isArray(json_data_object[data]) || json_data_object[data] instanceof Object )\n            {\n                final_array.push( { text: `${data}`, children: jsonToJsTreeObject( json_data_object[data], new Array() ) } );\n                // using state attribute \n                // final_array.push( { text: `${data}`, state : {  'opened' : false, 'selected' : false }, children: jsonToJsTreeObject( json_data_object[data], new Array() ) } );\n            }\n            else\n            {\n                final_array.push( { text: `${data}`, children: [{ text: `${json_data_object[data]}` }] } );\n                // using state attribute\n                // final_array.push( { text: `${data}`, state : {  'opened' : false, 'selected' : false }, children: [{ text: `${json_data_object[data]}` }] } );\n            }\n        });\n\n        return final_array;\n    }\n  \n(function(scope) {\n  scope.$watch('msg', function(msg) {\n    if (msg) {\n        $('#jstree').remove()\n        let myjsonObject = msg.payload\n        let div = document.createElement('div')\n        div.setAttribute(\"id\", \"jstree\")\n        let treediv = document.getElementById(\"tree\")\n        treediv.appendChild(div)\n        $('#jstree').jstree({ 'core' : {\n                    'data' : jsonToJsTreeObject( myjsonObject )\n        } });\n        $('#jstree').on(\"changed.jstree\", function (e, data) {\n            let path = $('#jstree').jstree(true).get_path(data.node,\"/\");\n            console.log(path);\n            msg.output = path\n            scope.send(msg)\n        });\n    }\n  });\n})(scope);\n\n</script>\n</body>\n</html>",
+        "storeOutMessages": false,
+        "fwdInMessages": false,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 1320,
+        "y": 600,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "ff3c4079094cd7dd",
+        "type": "function",
+        "z": "cb38a8b98543bce3",
+        "name": "Send custom data messages",
+        "func": "\nconsole.log(\"Created fake data message :\");\nmsg.payload[\"msg_type\"] = 0x101;\nmsg.payload[\"value\"] = msg.payload[\"value\"] % 101;\nmsg.payload[\"sent\"] = false;\nmsg.payload[\"acked\"] = false;\nmsg.payload[\"sequence_number\"] = Math.ceil(Math.random()*3135315) + 10;\n\nconsole.log(msg.payload);\n\n\nvar message_buffer = global.get(\"message_buffer\");\n\nvar to = parseInt(msg.payload[\"to\"]);\n\n//the entries for each destination are created only once connected\nif (message_buffer[to] == undefined)\n    message_buffer[to] = new Array();\n \n//set it to first\nmessage_buffer[to].unshift(msg.payload);\n\n\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 420,
+        "y": 660,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "11962f18411f6fe1",
+        "type": "ui_form",
+        "z": "cb38a8b98543bce3",
+        "name": "",
+        "label": "Send data messages to the actuators",
+        "group": "87b73a2c33823ae1",
+        "order": 1,
+        "width": "13",
+        "height": "9",
+        "options": [
+            {
+                "label": "To [AID number of an actuator]",
+                "value": "to",
+                "type": "number",
+                "required": true,
+                "rows": null
+            },
+            {
+                "label": "From [AID number (can be fake)]",
+                "value": "from",
+                "type": "number",
+                "required": true,
+                "rows": null
+            },
+            {
+                "label": "Value",
+                "value": "value",
+                "type": "number",
+                "required": true,
+                "rows": null
+            }
+        ],
+        "formValue": {
+            "to": "",
+            "from": "",
+            "value": ""
+        },
+        "payload": "",
+        "submit": "submit",
+        "cancel": "cancel",
+        "topic": "topic",
+        "topicType": "str",
+        "splitLayout": "",
+        "className": "",
+        "x": 410,
+        "y": 740,
+        "wires": [
+            [
+                "ff3c4079094cd7dd"
+            ]
+        ]
+    },
+    {
+        "id": "fa36beb6884b06ed",
+        "type": "function",
+        "z": "cb38a8b98543bce3",
+        "name": "STATISTICS_MODULE",
+        "func": "function get_type_string(msg_type_value){\n  switch (msg_type_value){\n    case 30:\n      return \"Beacon\";\n    case 0x200:\n      return \"Ack\";\n    case 0x100:\n      return \"Uplink Data\";\n    case 0x101:\n      return \"Downlink Data\";\n    case 0:\n      return \"Association Message\";\n\n\n\n\n  }\n\n\n\n}\n\n\nvar inbound_msg = msg.payload;\n\nvar msgs = global.get(\"messages_exchanged\");\n\nif (msgs[inbound_msg[\"msg_type\"]] == undefined)\n    msgs[inbound_msg[\"msg_type\"]] = 1;\nelse\n  msgs[inbound_msg[\"msg_type\"]]+=1;\n\n\n\nvar x = {};\nx[inbound_msg[\"msg_type\"]] = msgs[inbound_msg[\"msg_type\"]];\n \nreturn { \n  \"payload\": msgs[inbound_msg[\"msg_type\"]],\n  \"topic\": get_type_string(inbound_msg[\"msg_type\"]) \n};",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 810,
+        "y": 780,
+        "wires": [
+            [
+                "ad9d3919790265e4"
+            ]
+        ]
+    },
+    {
+        "id": "ad9d3919790265e4",
+        "type": "ui_chart",
+        "z": "cb38a8b98543bce3",
+        "name": "",
+        "group": "87b73a2c33823ae1",
+        "order": 3,
+        "width": "13",
+        "height": "9",
+        "label": "Messages per Type",
+        "chartType": "bar",
+        "legend": "false",
+        "xformat": "auto",
+        "interpolate": "linear",
+        "nodata": "",
+        "dot": false,
+        "ymin": "",
+        "ymax": "",
+        "removeOlder": 1,
+        "removeOlderPoints": "",
+        "removeOlderUnit": "3600",
+        "cutout": 0,
+        "useOneColor": false,
+        "useUTC": false,
+        "colors": [
+            "#1f77b4",
+            "#aec7e8",
+            "#ff7f0e",
+            "#2ca02c",
+            "#98df8a",
+            "#d62728",
+            "#ff9896",
+            "#9467bd",
+            "#c5b0d5"
+        ],
+        "outputs": 1,
+        "useDifferentColor": false,
+        "className": "",
+        "x": 1110,
+        "y": 780,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "a257bad8f14c8311",
+        "type": "function",
+        "z": "cb38a8b98543bce3",
+        "name": "PROCESS_ACKS",
+        "func": "if (msg.payload[\"msg_type\"] != 0x200 || msg.payload[\"to\"]!=0) return null;\n/*only process acks to the coordinator */ \n\nvar ack_message = msg.payload;\n\nvar message_buffer = global.get(\"message_buffer\");\nconst destination = ack_message[\"from\"];\n\n//should never happen \nif (message_buffer[destination] == undefined || message_buffer[destination].length == 0) return null;\n\n\n\nvar first_message_out = message_buffer[destination][0];\nif (\n        first_message_out[\"acked\"] == false  \n        &&\n        first_message_out[\"sequence_number\"] == ack_message[\"sequence_number\"]\n    )\n{      \n\n    console.log(\"Mote #\" + destination + \" acknowledged message #\" + first_message_out[\"sequence_number\"]);\n\n    //console.log(message_buffer[destination]);\n    message_buffer[destination].shift();\n   // console.log(message_buffer[destination]);\n}\n ",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1090,
+        "y": 580,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "2ce66e1387af5255",
+        "type": "debug",
+        "z": "cb38a8b98543bce3",
+        "name": "CHANNEL",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 950,
+        "y": 520,
+        "wires": []
+    },
+    {
+        "id": "aac59c662ca2c0d2",
+        "type": "delay",
+        "z": "cb38a8b98543bce3",
+        "name": "",
+        "pauseType": "delayv",
+        "timeout": "5",
+        "timeoutUnits": "seconds",
+        "rate": "1",
+        "nbRateUnits": "1",
+        "rateUnits": "second",
+        "randomFirst": "1",
+        "randomLast": "5",
+        "randomUnits": "seconds",
+        "drop": false,
+        "allowrate": false,
+        "outputs": 1,
+        "x": 500,
+        "y": 360,
+        "wires": [
+            [
+                "66a37fd56cbf5ebd"
+            ]
+        ]
+    },
+    {
+        "id": "bad3d2384fa40aa4",
+        "type": "function",
+        "z": "cb38a8b98543bce3",
+        "name": "WAIT_DOWNLINK",
+        "func": "if(msg.payload[\"msg_type\"] != 0x1e) return null; //filter beacons\n\nvar beacon = msg.payload;\n\n//enable downlink messages only during CFP_DOWN\nmsg.delay = (beacon[\"cap_start\"] + beacon[\"cap_duration\"] + beacon[\"GTS_uplink\"].length)*beacon[\"slot_duration\"];\n\n//console.log(\"CFP down starts in : \" + msg.delay);\n\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 250,
+        "y": 440,
+        "wires": [
+            [
+                "aac59c662ca2c0d2"
+            ]
+        ]
+    },
+    {
+        "id": "2af42c3059bfd9fe",
+        "type": "mqtt-broker",
+        "name": "HIVE_MQ_BROKER",
+        "broker": "broker.hivemq.com",
+        "port": "1883",
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": "4",
+        "keepalive": "60",
+        "cleansession": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "87b73a2c33823ae1",
+        "type": "ui_group",
+        "name": "STD",
+        "tab": "11a5ef60c1c7c7d7",
+        "order": 1,
+        "disp": true,
+        "width": "26",
+        "collapse": true,
+        "className": ""
+    },
+    {
+        "id": "11a5ef60c1c7c7d7",
+        "type": "ui_tab",
+        "name": "Home",
+        "icon": "dashboard",
+        "disabled": false,
+        "hidden": false
+    }
+]

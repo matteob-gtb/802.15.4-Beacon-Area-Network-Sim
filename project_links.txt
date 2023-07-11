@@ -1,0 +1,4 @@
+ACTUATOR_1 : https://wokwi.com/projects/369066954032787457
+ACTUATOR_2 : https://wokwi.com/projects/369254707654199297
+SENSOR_1 : https://wokwi.com/projects/369066932250717185
+SENSOR_2 : https://wokwi.com/projects/369254691089843201
